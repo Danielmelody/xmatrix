@@ -82,17 +82,6 @@ pub fn client_identity_headers(component: ClientComponent) -> HeaderMap {
 /// `peer closed connection without sending TLS close_notify`.
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
-/// After the idle time above, three probes ten seconds apart settle whether a
-/// silent peer is still there, instead of the operating system's default of
-/// hours.
-const TCP_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
-const TCP_KEEPALIVE_RETRIES: u32 = 3;
-/// How long written bytes may stay unacknowledged before the connection is
-/// dropped. Keepalive only probes an idle connection: a request written onto a
-/// half-open one is retransmitted instead, by default for about fifteen
-/// minutes, and the caller waits that long for a reply that cannot arrive.
-#[cfg(any(target_os = "android", target_os = "linux"))]
-const TCP_USER_TIMEOUT: Duration = Duration::from_secs(30);
 /// Bounds only reaching the Hub. There is deliberately no whole-request
 /// timeout: long polls and streamed bodies outlive any fixed budget.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -114,10 +103,9 @@ pub fn client() -> Result<reqwest::Client> {
 
 /// Runs `operation` with every Hub request on a connection of its own.
 ///
-/// A pooled connection that went half-open looks idle and healthy, so the next
-/// request is written onto it and waits for a reply that cannot arrive. Work
-/// that recovers from a lost connection must not ride the pool that may have
-/// been lost with it.
+/// A request on a pooled connection waits for as long as the peer keeps
+/// acknowledging it, and work that recovers from a lost connection must not
+/// depend on the connections that may have been lost with it.
 pub async fn on_fresh_connections<T>(operation: impl std::future::Future<Output = T>) -> Result<T> {
     let client = client_builder(process_client_component())
         .pool_max_idle_per_host(0)
@@ -126,17 +114,12 @@ pub async fn on_fresh_connections<T>(operation: impl std::future::Future<Output 
 }
 
 fn client_builder(component: ClientComponent) -> reqwest::ClientBuilder {
-    let builder = reqwest::Client::builder()
+    reqwest::Client::builder()
         .default_headers(client_identity_headers(component))
         .redirect(reqwest::redirect::Policy::none())
         .pool_idle_timeout(POOL_IDLE_TIMEOUT)
         .tcp_keepalive(TCP_KEEPALIVE)
-        .tcp_keepalive_interval(TCP_KEEPALIVE_INTERVAL)
-        .tcp_keepalive_retries(TCP_KEEPALIVE_RETRIES)
-        .connect_timeout(CONNECT_TIMEOUT);
-    #[cfg(any(target_os = "android", target_os = "linux"))]
-    let builder = builder.tcp_user_timeout(TCP_USER_TIMEOUT);
-    builder
+        .connect_timeout(CONNECT_TIMEOUT)
 }
 
 /// One pooled client per component, built once per process.

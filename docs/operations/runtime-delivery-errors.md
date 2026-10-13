@@ -46,13 +46,11 @@ A Machine Daemon reconnect is a sequence of bounded attempts. Each attempt
 enrolls (name check and credential mint, 20 seconds), dials (15 seconds), writes
 the connect frame (10 seconds) and reads the handshake reply (15 seconds); the
 dial through the handshake also sits under one 45-second bound, so a step added
-later cannot hold the loop. Enrollment runs on a connection of its own: a
-reconnect usually follows a lost network path, and a pooled Hub connection that
-went half-open with it accepts the request and never answers. Pooled Hub
-connections carry TCP keepalive with a probe interval and count, and on Linux a
-30-second `TCP_USER_TIMEOUT`, so a request written onto a dead connection fails
-in about half a minute instead of waiting out the kernel's retransmission
-timeout of about fifteen.
+later cannot hold the loop. Enrollment runs on a connection of its own rather
+than a pooled one. The Hub client has no request deadline: its TCP keepalive and
+30-second `TCP_USER_TIMEOUT` (reqwest defaults on Linux) end a connection whose
+peer stopped acknowledging, but not one that acknowledges a request and never
+answers it. The bounds above are what end that wait.
 
 After registration every failed attempt is reported to the daemon host with its
 own reason, including a handshake the Hub never answers and a connect the Hub
@@ -62,7 +60,10 @@ refuses, and a session that follows any such report is announced as restored.
 host arms a ten-minute deadline when the control connection goes down and
 disarms it when it returns. If the deadline passes, the profile runtime exits
 with an error and the host restarts it in the same process, which rebuilds the
-saved session, brokers and connection actor without a service manager.
+saved session, brokers and connection actor without a service manager. The
+rebuilt runtime exchanges its session before it has a connection actor or a
+deadline of its own, so session exchange and refresh carry a 30-second bound; a
+late Hub fails the start and the host retries it with backoff.
 
 Daemon diagnostics start with their UTC time. A daemon that an update starts
 without a service manager appends its output to `logs/daemon.out` and
