@@ -283,68 +283,67 @@ fn assert_reconnected(event: MachineDaemonConnectionEvent) {
     );
 }
 
+/// Connects to `hub`, loses the session's network path, and expects the
+/// heartbeat to notice, the next attempt to fail for `reason`, and the attempt
+/// after that to connect.
+async fn recovers_after_one_failed_attempt(
+    hub: &ScriptedHub,
+    reason: &str,
+) -> MachineDaemonConnectionClient {
+    let (client, mut events) = connected_client(hub).await;
+    hub.lose_the_network_path();
+    assert!(disconnected(next_event(&mut events).await).contains("heartbeat timed out"));
+    assert_eq!(disconnected(next_event(&mut events).await), reason);
+    assert_reconnected(next_event(&mut events).await);
+    assert!(client.is_connected(), "{reason}");
+    client
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_credential_reply_that_never_arrives_does_not_hold_the_reconnect_loop() {
     // The first enrollment registers the daemon; the one that follows the lost
     // session is written onto a dead connection and never answered.
     let hub = ScriptedHub::new(vec![Enroll::Answer, Enroll::Stall], Vec::new());
-    let (client, mut events) = connected_client(&hub).await;
-
-    let lost_at = Instant::now();
-    hub.lose_the_network_path();
-    assert!(disconnected(next_event(&mut events).await).contains("heartbeat timed out"));
-    assert_eq!(
-        disconnected(next_event(&mut events).await),
-        "Machine Daemon credential enrollment failed: the Hub did not answer within 20s"
-    );
-    assert_reconnected(next_event(&mut events).await);
-    assert!(client.is_connected());
+    let started = Instant::now();
+    let client = recovers_after_one_failed_attempt(
+        &hub,
+        "Machine Daemon credential enrollment failed: the Hub did not answer within 20s",
+    )
+    .await;
     assert_eq!(client.connection_epoch(), Some(2));
     // Heartbeat detection, one enrollment bound and one backoff: about a
     // minute, where the unbounded request used to wait on the socket itself.
     assert!(
-        lost_at.elapsed() < Duration::from_secs(90),
+        started.elapsed() < Duration::from_secs(90),
         "{:?}",
-        lost_at.elapsed()
+        started.elapsed()
     );
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_handshake_the_hub_never_answers_is_reported_and_retried() {
-    let hub = ScriptedHub::new(Vec::new(), vec![Dialed::Session, Dialed::SilentHandshake]);
-    let (client, mut events) = connected_client(&hub).await;
-
-    hub.lose_the_network_path();
-    assert!(disconnected(next_event(&mut events).await).contains("heartbeat timed out"));
-    // This step used to back off in silence, leaving the host on the reason
-    // above for as long as the handshake kept timing out.
-    assert_eq!(
-        disconnected(next_event(&mut events).await),
-        "Machine Daemon handshake timed out; the Hub did not answer the connect frame within 15s"
-    );
-    assert_reconnected(next_event(&mut events).await);
-    assert!(client.is_connected());
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_refused_handshake_becomes_the_reported_reason_and_is_retried() {
-    let hub = ScriptedHub::new(
-        Vec::new(),
-        vec![
-            Dialed::Session,
+async fn every_failed_dial_step_is_reported_with_its_reason_and_retried() {
+    let steps = [
+        // Used to back off in silence, leaving the host on the heartbeat
+        // reason for as long as the handshake kept timing out.
+        (
+            Dialed::SilentHandshake,
+            "Machine Daemon handshake timed out; the Hub did not answer the connect frame within 15s",
+        ),
+        // Used to raise an error without changing the reported state.
+        (
             Dialed::Refuse("The Hub could not complete this Machine Daemon connect"),
-        ],
-    );
-    let (client, mut events) = connected_client(&hub).await;
-
-    hub.lose_the_network_path();
-    assert!(disconnected(next_event(&mut events).await).contains("heartbeat timed out"));
-    assert_eq!(
-        disconnected(next_event(&mut events).await),
-        "Hub refused the Machine Daemon connection: The Hub could not complete this Machine Daemon connect (code=runtime.session_failed, diagnosticId=diag_1)"
-    );
-    assert_reconnected(next_event(&mut events).await);
-    assert!(client.is_connected());
+            "Hub refused the Machine Daemon connection: The Hub could not complete this Machine Daemon connect (code=runtime.session_failed, diagnosticId=diag_1)",
+        ),
+        // No step bound covers a dial that never returns; the attempt bound does.
+        (
+            Dialed::Hang,
+            "Machine Daemon connection attempt did not finish within 45s",
+        ),
+    ];
+    for (step, reason) in steps {
+        let hub = ScriptedHub::new(Vec::new(), vec![Dialed::Session, step]);
+        recovers_after_one_failed_attempt(&hub, reason).await;
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -364,21 +363,6 @@ async fn a_first_session_that_follows_a_failed_dial_is_announced_as_restored() {
     assert_reconnected(next_event(&mut events).await);
     assert!(client.is_connected());
     assert_eq!(hub.sessions(), 1);
-}
-
-#[tokio::test(start_paused = true)]
-async fn an_attempt_that_never_finishes_is_abandoned_for_the_next_one() {
-    let hub = ScriptedHub::new(Vec::new(), vec![Dialed::Session, Dialed::Hang]);
-    let (client, mut events) = connected_client(&hub).await;
-
-    hub.lose_the_network_path();
-    assert!(disconnected(next_event(&mut events).await).contains("heartbeat timed out"));
-    assert_eq!(
-        disconnected(next_event(&mut events).await),
-        "Machine Daemon connection attempt did not finish within 45s"
-    );
-    assert_reconnected(next_event(&mut events).await);
-    assert!(client.is_connected());
 }
 
 #[tokio::test(start_paused = true)]
