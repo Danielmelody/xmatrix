@@ -114,6 +114,23 @@ test("cards sit at their anchors and push down the ones after them; a focused ca
   assert.equal(crowded.get("b"), 50 + MARGIN_GAP);
 });
 
+test("the margin fits the page: near its end the cards move up, and what still does not fit beside an open one waits", () => {
+  const cards = [{ id: "a", top: 100, height: 80 }, { id: "open", top: 900, height: 500 }, { id: "b", top: 950, height: 60 }];
+  // Without the end, the open card sits at its anchor and pushes the one after it far below.
+  assert.deepEqual(Object.fromEntries(layoutMargin(cards, "open")), { a: 100, open: 900, b: 1400 + MARGIN_GAP });
+  // With room, nothing changes.
+  assert.deepEqual(Object.fromEntries(layoutMargin(cards, "open", 2000)), Object.fromEntries(layoutMargin(cards, "open")));
+  // Near the end, the open card rises only to end with the page, and the card after it is left out while it is open.
+  assert.deepEqual(Object.fromEntries(layoutMargin(cards, "open", 1000)), { a: 100, open: 500 });
+  // With nothing open, the cards past the end move up, in their order, until the last ends with the page.
+  const closed = [{ id: "a", top: 100, height: 80 }, { id: "b", top: 950, height: 60 }, { id: "c", top: 960, height: 60 }];
+  assert.deepEqual(Object.fromEntries(layoutMargin(closed, null, 1000)),
+    { a: 100, b: 1000 - 60 - MARGIN_GAP - 60, c: 1000 - 60 });
+  // A page shorter than its cards keeps the first ones and leaves out the rest.
+  const short = layoutMargin(closed, null, 150);
+  assert.deepEqual(Object.fromEntries(short), { a: 0, b: 80 + MARGIN_GAP });
+});
+
 test("the conversation open in the margin shows there even once it has sunk, or before the page links it", () => {
   const cards = marginConversations({
     now: NOW,
