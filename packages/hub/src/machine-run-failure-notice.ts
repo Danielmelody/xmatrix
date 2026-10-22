@@ -7,6 +7,8 @@ import type { Env } from "./types";
 
 export interface MachineRunFailureNotice {
   runId: string; channelId: string; agentName: string; detail: string; phase?: string;
+  /** The Agent's harness, which gives the notice its face (protocol faces.ts). */
+  harness?: string;
   /** The summon that started the Run: the failure answers on its chip. */
   sourceMessageId?: string;
   ownerUserId: string; ownerEmail: string; machineId: string; hostId: string;
@@ -43,6 +45,7 @@ export async function machineRunFailureNoticeCommand(input: MachineRunFailureNot
     residual: { appMetadata: { xmatrixProvenance: "system_fact", xmatrixSystemNotice: true,
       source: "machine_run_failure", runId: input.runId, machineId: input.machineId, machineOwnerUserId: input.ownerUserId, machineName: input.machineName,
       failureCode: humanized.code, failureDetail: humanized.summary,
+      ...(input.harness ? { harness: input.harness } : {}),
       ...(input.phase ? { statusPhase: input.phase } : {}) } },
   };
 }
