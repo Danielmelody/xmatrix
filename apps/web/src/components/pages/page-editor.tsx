@@ -15,7 +15,7 @@ import { EditorView } from "prosemirror-view";
 import { yCursorPluginKey, ySyncPluginKey } from "y-prosemirror";
 import {
   channelReferenceToken, gitHubFileReferenceFrom, gitHubFileReferenceHref, pageBlocks, pageReferenceToken,
-  type PageSummary, type SerializedAutomation,
+  type PageAuthor, type PageSummary, type SerializedAutomation,
 } from "@xmatrix/protocol";
 import { Face } from "@/components/dashboard/face";
 import type { ChannelReference } from "@/components/dashboard/message-reference-catalog";
@@ -31,7 +31,7 @@ import type { LocalMedia, PageMediaUrl, UploadPageMedia } from "./page-media";
 import { referencesKey, type PageReferenceTargets } from "./page-reference-chips";
 import { PageCommentBox } from "./page-comment-box";
 import type { MarginAgent } from "./page-margin-model";
-import { PageBlameLayer, type PageBlameSource } from "./page-blame";
+import { PageBlameLayer, PageByline, type PageBlameSource } from "./page-blame";
 import { SectionAgentsInPage } from "./page-section-agents";
 import type { PageSessionChanges } from "./page-session-changes";
 import {
@@ -254,10 +254,12 @@ export function PageEditor({ session, canEdit, onBlockChange, onBlocks, actions,
   onOpenConversation, discussions, automations, headingActions, focusedConversationId = null, onFocusConversation,
   onAnchorOffsets, cursorPresence, onReady, readerBaseline = null, readerShown = false, commentInMargin = false, onReaderChanges, onWrite, readFrom, reading,
   suggestions = null, onSuggestions, suggestionControl, readGitHubFile, references, completion, placeholder, mediaUrl,
-  uploadMedia, onChanges, blame }: {
+  uploadMedia, onChanges, blame, writing }: {
   session: PageLiveSession;
-  /** Who wrote what, shown where the reader rests or selects; without it the page does not say. */
+  /** Who wrote what, shown where the reader rests or selects and under the title; without it the page does not say. */
   blame?: PageBlameSource;
+  /** Whether one of the page's authors is changing it now. */
+  writing?: (author: PageAuthor) => boolean;
   /** What an empty page asks for instead of its title: someone co-writing it asks for its first line. */
   placeholder?: string;
   canEdit: boolean;
@@ -330,6 +332,8 @@ export function PageEditor({ session, canEdit, onBlockChange, onBlocks, actions,
   const wrote = useRef(onWrite);
   wrote.current = onWrite;
   const view = useRef<EditorView | null>(null);
+  // The editor once it is drawn, for what is placed by it as it appears (the byline).
+  const [drawnView, setDrawnView] = useState<EditorView | null>(null);
   const placeholderText = useRef(placeholder);
   useEffect(() => {
     placeholderText.current = placeholder;
@@ -589,6 +593,7 @@ export function PageEditor({ session, canEdit, onBlockChange, onBlocks, actions,
       },
     });
     view.current = editor;
+    setDrawnView(editor);
     showToolbar(readToolbar(editor));
     readBlocks(editor);
     const resized = new ResizeObserver(() => measure());
@@ -605,6 +610,7 @@ export function PageEditor({ session, canEdit, onBlockChange, onBlocks, actions,
       window.clearTimeout(commentTimer.current);
       editor.destroy();
       view.current = null;
+      setDrawnView(null);
     };
     // The editor binds one session for its lifetime; the parent remounts it per page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -905,6 +911,7 @@ export function PageEditor({ session, canEdit, onBlockChange, onBlocks, actions,
         </div>
       )}
       {blame && <PageBlameLayer view={view} frame={frame} source={blame} inMargin={commentInMargin} />}
+      {blame && drawnView && <PageByline view={drawnView} frame={frame} source={blame} writing={writing ?? (() => false)} />}
       {trigger && menuAt && (
         <div className="absolute z-20 w-64" style={{ left: menuAt.left, top: menuAt.bottom + 4 }}>
         <PaperPopover role="listbox" aria-label={MENU_LABELS[trigger.kind]} data-testid={`page-${trigger.kind}-menu`}
