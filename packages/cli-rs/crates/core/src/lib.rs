@@ -1,3 +1,12 @@
+/// Diagnostics this crate prints carry their time once a daemon asks for it
+/// (see `daemon_log`); the name shadows the standard macro for every module
+/// declared below.
+macro_rules! eprintln {
+    ($($arg:tt)*) => {
+        $crate::daemon_log::eprintln(format_args!($($arg)*))
+    };
+}
+
 pub mod access;
 pub mod agent_instance_connection;
 mod agent_instance_delivery;
@@ -15,6 +24,7 @@ pub mod config;
 mod connection_error;
 pub mod daemon_auth;
 pub mod daemon_host;
+pub mod daemon_log;
 pub mod daemon_record;
 pub mod error;
 pub mod failure_detail;
