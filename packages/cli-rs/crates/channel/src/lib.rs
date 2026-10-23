@@ -705,7 +705,6 @@ pub(crate) async fn cmd_send(
         channel_id,
         &client_message_id,
         attachments,
-        has_agent_sender_identity,
     )
     .await?;
 
@@ -1022,7 +1021,6 @@ async fn upload_channel_file_attachments(
     channel_id: &str,
     message_id: &str,
     attachments: Vec<PendingFileAttachment>,
-    agent_run: bool,
 ) -> error::Result<Vec<UploadedMessageAttachment>> {
     #[derive(Deserialize)]
     struct UploadIntentResponse {
@@ -1036,11 +1034,6 @@ async fn upload_channel_file_attachments(
     }
 
     #[derive(Deserialize)]
-    struct ChannelResponse {
-        channel: protocol::SerializedChannel,
-    }
-
-    #[derive(Deserialize)]
     struct ChannelsResponse {
         channels: Vec<protocol::SerializedChannel>,
     }
@@ -1050,34 +1043,21 @@ async fn upload_channel_file_attachments(
     }
     /* The scope has to match what the Hub computes for the message itself
     (relay-authority-domain-commands channelScope), or binding the uploaded object
-    fails with "verified canonical attachment ref is unavailable". Agent-run
-    principals are not allowed to GET one channel, so they read the same
-    mode/Space facts out of the channel list they can GET. */
-    let channel = if agent_run {
-        let listed: ChannelsResponse = http::request_json(
-            &with_route(hub_url, HubRoutes::CHANNELS),
-            "GET",
-            Some(token),
-            None,
-        )
-        .await?;
-        listed
-            .channels
-            .into_iter()
-            .find(|candidate| candidate.id == channel_id)
-    } else {
-        let response: ChannelResponse = http::request_json(
-            &with_route(
-                hub_url,
-                &format!("/api/channels/{}", urlencoding::encode(channel_id)),
-            ),
-            "GET",
-            Some(token),
-            None,
-        )
-        .await?;
-        Some(response.channel)
-    };
+    fails with "verified canonical attachment ref is unavailable". The Channel's
+    mode and Space come from the channel list: the Hub serves no read of a
+    single Channel, so asking for one answered 404 and no person could attach a
+    file from a terminal. */
+    let listed: ChannelsResponse = http::request_json(
+        &with_route(hub_url, HubRoutes::CHANNELS),
+        "GET",
+        Some(token),
+        None,
+    )
+    .await?;
+    let channel = listed
+        .channels
+        .into_iter()
+        .find(|candidate| candidate.id == channel_id);
     let visibility_scope_id = attachment_visibility_scope_id(
         channel_id,
         channel.as_ref().map(|channel| channel.mode.as_str()),
